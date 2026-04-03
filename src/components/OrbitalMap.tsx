@@ -90,9 +90,9 @@ export default function OrbitalMap({ snapshot, selectedSat, onSelectSat }: Props
         ctx!.lineWidth = lon === 0 ? 1 : 0.5;
         ctx!.beginPath(); ctx!.moveTo(x, 0); ctx!.lineTo(x, H); ctx!.stroke();
       }
-      ctx!.font = "10px system-ui"; ctx!.fillStyle = "rgba(255,255,255,0.15)";
+      ctx!.font = "10px system-ui, sans-serif"; ctx!.fillStyle = "rgba(255,255,255,0.28)";
       for (let lat = -60; lat <= 60; lat += 30) { if (!lat) continue; ctx!.fillText(lat + "°", 4, mY(lat, H) - 3); }
-      for (let lon = -150; lon <= 150; lon += 60) { ctx!.fillText(lon + "°", mX(lon, W) + 3, H - 6); }
+      for (let lon = -150; lon <= 150; lon += 60) { ctx!.fillText(lon + "°", mX(lon, W) + 3, H - 8); }
 
       if (!snap) {
         ctx!.fillStyle = "rgba(255,255,255,0.25)"; ctx!.font = "bold 14px system-ui";
@@ -107,7 +107,10 @@ export default function OrbitalMap({ snapshot, selectedSat, onSelectSat }: Props
         g.addColorStop(0, "rgba(59,130,246,0.15)"); g.addColorStop(1, "transparent");
         ctx!.fillStyle = g; ctx!.beginPath(); ctx!.arc(x, y, 28, 0, Math.PI * 2); ctx!.fill();
         ctx!.fillStyle = "#3b82f6"; ctx!.beginPath(); ctx!.arc(x, y, 3, 0, Math.PI * 2); ctx!.fill();
-        ctx!.fillStyle = "rgba(255,255,255,0.35)"; ctx!.font = "9px system-ui"; ctx!.fillText(gs.name, x + 5, y + 3);
+        ctx!.font = "bold 9px system-ui, sans-serif";
+        const gsW = ctx!.measureText(gs.name).width;
+        ctx!.fillStyle = "rgba(5,8,18,0.8)"; ctx!.fillRect(x + 6, y - 7, gsW + 6, 13);
+        ctx!.fillStyle = "rgba(120,190,255,0.95)"; ctx!.fillText(gs.name, x + 9, y + 3);
       }
 
       // Historical trails (~90 min sim) — behind debris
@@ -224,28 +227,53 @@ export default function OrbitalMap({ snapshot, selectedSat, onSelectSat }: Props
           ctx!.fillStyle = color; ctx!.font = "bold 10px system-ui"; ctx!.fillText(sat.status, tx + 9, ty + 47);
         }
 
-        // Label for all sats
-        if (!isSel) {
-          ctx!.fillStyle = "rgba(255,255,255,0.5)"; ctx!.font = "9px system-ui";
-          ctx!.fillText(sat.id, x + size + 3, y + 3);
+        // Label for all sats — only show if not too crowded
+        if (!isSel && snap.satellites.length <= 20) {
+          // Draw text with background for readability
+          const label = sat.id.slice(-5);
+          ctx!.font = "bold 10px system-ui, sans-serif";
+          const tw = ctx!.measureText(label).width;
+          ctx!.fillStyle = "rgba(5,8,18,0.75)";
+          ctx!.fillRect(x + size + 2, y - 7, tw + 6, 14);
+          ctx!.fillStyle = "rgba(255,255,255,0.85)";
+          ctx!.fillText(label, x + size + 5, y + 4);
         }
       }
 
-      // Legend
-      const lx = W - 178, ly = H - 130;
-      ctx!.fillStyle = "rgba(10,12,20,0.92)"; ctx!.beginPath(); ctx!.roundRect(lx, ly, 170, 122, 8); ctx!.fill();
-      ctx!.strokeStyle = "rgba(255,255,255,0.07)"; ctx!.lineWidth = 1; ctx!.stroke();
-      ctx!.fillStyle = "rgba(255,255,255,0.4)"; ctx!.font = "bold 9px system-ui"; ctx!.fillText("LEGEND", lx + 10, ly + 14);
-      [
-        { c: "#22c55e", l: "Satellite — Nominal", r: 6 },
+      // Legend — bottom right, larger and clearer
+      const legendItems = [
+        { c: "#22c55e", l: "Satellite — Nominal",    r: 6 },
         { c: "#f59e0b", l: "Satellite — Recovering", r: 6 },
         { c: "#ef4444", l: "Satellite — EVADING 🔥", r: 6 },
-        { c: "#ef4444", l: "Debris", r: 3 },
-        { c: "#3b82f6", l: "Ground Station", r: 3 },
-      ].forEach((item, i) => {
-        const iy = ly + 26 + i * 18;
-        ctx!.fillStyle = item.c; ctx!.beginPath(); ctx!.arc(lx + 12, iy, item.r, 0, Math.PI * 2); ctx!.fill();
-        ctx!.fillStyle = "rgba(255,255,255,0.65)"; ctx!.font = "10px system-ui"; ctx!.fillText(item.l, lx + 22, iy + 4);
+        { c: "#ef4444", l: "Debris",                 r: 3 },
+        { c: "#3b82f6", l: "Ground Station",         r: 3 },
+      ];
+      const legW = 200, legRowH = 22, legPad = 14;
+      const legH = legPad * 2 + 18 + legendItems.length * legRowH;
+      const lx = W - legW - 12, ly = H - legH - 12;
+
+      // Background with stronger contrast
+      ctx!.fillStyle = "rgba(5,8,18,0.94)";
+      ctx!.beginPath(); ctx!.roundRect(lx, ly, legW, legH, 8); ctx!.fill();
+      ctx!.strokeStyle = "rgba(255,255,255,0.15)"; ctx!.lineWidth = 1; ctx!.stroke();
+
+      // Header
+      ctx!.fillStyle = "rgba(255,255,255,0.7)";
+      ctx!.font = "bold 11px system-ui, sans-serif";
+      ctx!.fillText("LEGEND", lx + legPad, ly + legPad + 4);
+
+      // Items
+      legendItems.forEach((item, i) => {
+        const iy = ly + legPad + 18 + i * legRowH + legRowH / 2;
+        // Dot
+        ctx!.fillStyle = item.c;
+        ctx!.shadowColor = item.c; ctx!.shadowBlur = 4;
+        ctx!.beginPath(); ctx!.arc(lx + legPad + 6, iy, item.r, 0, Math.PI * 2); ctx!.fill();
+        ctx!.shadowBlur = 0;
+        // Label — white, readable
+        ctx!.fillStyle = "rgba(255,255,255,0.88)";
+        ctx!.font = "11px system-ui, sans-serif";
+        ctx!.fillText(item.l, lx + legPad + 18, iy + 4);
       });
     }
 
@@ -268,11 +296,11 @@ export default function OrbitalMap({ snapshot, selectedSat, onSelectSat }: Props
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div style={{ position: "absolute", top: "10px", left: "12px", zIndex: 10, fontSize: "11px", color: "rgba(255,255,255,0.3)", display: "flex", gap: "14px" }}>
-        <span>Ground Track · Mercator</span>
-        <span style={{ color: "rgba(34,197,94,0.8)" }}>● Satellites</span>
-        <span style={{ color: "rgba(239,68,68,0.8)" }}>● Debris</span>
-        <span style={{ color: "rgba(255,200,80,0.6)" }}>◐ Day/Night</span>
+      <div style={{ position: "absolute", top: "10px", left: "12px", zIndex: 10, fontSize: "11px", color: "rgba(255,255,255,0.55)", display: "flex", gap: "14px", background: "rgba(5,8,18,0.7)", padding: "4px 10px", borderRadius: "6px" }}>
+        <span style={{ fontWeight: 600 }}>Ground Track · Mercator</span>
+        <span style={{ color: "#22c55e" }}>● Satellites</span>
+        <span style={{ color: "#ef4444" }}>● Debris</span>
+        <span style={{ color: "rgba(255,200,80,0.9)" }}>◐ Day/Night</span>
       </div>
       <canvas ref={canvasRef} width={1100} height={620}
         style={{ width: "100%", height: "100%", display: "block", cursor: "crosshair" }}

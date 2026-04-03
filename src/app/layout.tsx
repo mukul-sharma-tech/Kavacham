@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Project AETHER | Orbital Insight",
+  title: "Project Kavacham | Orbital Insight",
   description: "Autonomous Constellation Manager - National Space Hackathon 2026",
 };
 

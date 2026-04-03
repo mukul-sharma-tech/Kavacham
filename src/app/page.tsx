@@ -135,42 +135,77 @@ export default function Dashboard() {
 
   // ── Push debris close to a satellite (triggers COLA) ─────────────────────
   async function pushDebrisClose(satId: string) {
-    const sat = snapshot?.satellites.find((s) => s.id === satId);
-    if (!sat) { addLog("⚠ Select a satellite first"); return; }
+    // Get current sim time to use as timestamp
+    const snap = await fetch("/api/visualization/snapshot").then(r => r.json());
+    const simTs = snap.timestamp;
 
-    // Convert lat/lon back to approximate ECI (simplified)
-    const latR = sat.lat * Math.PI / 180;
-    const lonR = sat.lon * Math.PI / 180;
-    const r = 6378.137 + sat.alt;
-    const satR = {
-      x: r * Math.cos(latR) * Math.cos(lonR),
-      y: r * Math.cos(latR) * Math.sin(lonR),
-      z: r * Math.sin(latR),
+    // We need the satellite's actual ECI position from the API
+    // Use the telemetry endpoint to place debris near the satellite
+    // by fetching its current state first
+    const satData = snap.satellites?.find((s: { id: string }) => s.id === satId);
+    if (!satData) { addLog("⚠ Select a satellite first"); return; }
+
+    // Reconstruct approximate ECI from geodetic (good enough for placing nearby debris)
+    const latR = satData.lat * Math.PI / 180;
+    const lonR = satData.lon * Math.PI / 180;
+    const rKm = 6378.137 + satData.alt;
+
+    // GMST approximation to convert geodetic back to ECI
+    const gmstRad = ((280.46061837 + 360.98564736629 * ((new Date(simTs).getTime() / 86400000) - 10957.5)) % 360) * Math.PI / 180;
+    const lonECI = lonR + gmstRad;
+
+    const satECI = {
+      x: rKm * Math.cos(latR) * Math.cos(lonECI),
+      y: rKm * Math.cos(latR) * Math.sin(lonECI),
+      z: rKm * Math.sin(latR),
     };
-    // Debris 60m ahead in orbit direction
-    const now = new Date().toISOString();
+
+    // Orbital velocity direction (approximate: perpendicular to position in equatorial plane)
+    const vMag = Math.sqrt(398600.4418 / rKm); // circular orbit velocity
+    // Velocity perpendicular to position vector (prograde direction)
+    const posNorm = Math.sqrt(satECI.x ** 2 + satECI.y ** 2 + satECI.z ** 2);
+    const vDir = {
+      x: -satECI.y / posNorm,
+      y: satECI.x / posNorm,
+      z: 0,
+    };
+
+    // Place debris 80m ahead in the orbit direction, with slightly higher velocity
+    // This creates a genuine future conjunction
+    const offset = 0.08; // 80 meters in km
     await post("/api/telemetry", {
-      timestamp: now,
+      timestamp: simTs,
       objects: [{
         id: "DEB-THREAT",
         type: "DEBRIS",
-        r: { x: satR.x + 0.06, y: satR.y + 0.01, z: satR.z + 0.01 },
-        v: { x: -7.5, y: 0.5, z: 0.2 }, // head-on approach
+        r: {
+          x: satECI.x + vDir.x * offset,
+          y: satECI.y + vDir.y * offset,
+          z: satECI.z + vDir.z * offset,
+        },
+        // Slightly faster in same direction — will catch up to satellite
+        v: {
+          x: vDir.x * vMag * 1.001,
+          y: vDir.y * vMag * 1.001,
+          z: vDir.z * vMag * 1.001,
+        },
       }],
     });
-    addLog(`🎯 Debris pushed close to ${satId} — COLA should trigger`);
-    fetchSnapshot();
+    addLog(`🎯 Debris placed 80m ahead of ${satId} on converging orbit`);
+    addLog(`💡 Click +1 min — COLA will detect and schedule evasion burn`);
+    await fetchSnapshot();
   }
 
   // ── Manual evasion burn — applies immediately ────────────────────────────
   async function fireEvasionBurn(satId: string) {
-    const result = await post("/api/burn/now", {
+    const result = await post("/api/maneuver/schedule", {
+      instant: true,
       satelliteId: satId,
       dvMs: 5.0,
       direction: "prograde",
     });
     if (result.status === "BURN_APPLIED") {
-      addLog(`🔥 Burn fired on ${satId} — Δv 5 m/s, fuel: ${result.fuelRemaining?.toFixed(3)} kg (−${result.fuelConsumed?.toFixed(3)} kg)`);
+      addLog(`🔥 Burn fired on ${satId} — Δv 5 m/s, fuel: ${result.fuelAfter?.toFixed(3)} kg (−${result.fuelConsumed?.toFixed(3)} kg)`);
       await step(60);
     } else {
       addLog(`❌ Burn failed: ${result.error ?? JSON.stringify(result)}`);
@@ -226,7 +261,7 @@ export default function Dashboard() {
       <div style={{ display: "flex", alignItems: "center", gap: "16px", padding: "10px 20px", background: "#1a1d27", borderBottom: "1px solid #2a2d3e" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span style={{ fontSize: "20px" }}>🛰</span>
-          <span style={{ fontWeight: 700, fontSize: "16px", color: "#818cf8" }}>AETHER ACM</span>
+          <span style={{ fontWeight: 700, fontSize: "16px", color: "#818cf8" }}>KAVACHAM</span>
           <span style={{ fontSize: "11px", color: "#6b7280" }}>Autonomous Constellation Manager</span>
         </div>
 
