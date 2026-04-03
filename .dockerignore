@@ -1,5 +1,4 @@
-in node_modules
+node_modules
 .next
 .git
-*.md
 .env*
