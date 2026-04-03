@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Allow large payloads for telemetry ingestion
   experimental: {
     serverComponentsExternalPackages: [],
   },
+  // Remove the manual webpack alias section unless you have a specific non-standard need
 };
 
 module.exports = nextConfig;

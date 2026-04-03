@@ -17,7 +17,10 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # Install ALL deps (including dev) — needed for TypeScript build
-RUN npm ci
+RUN npm ci --include=dev \
+    --fetch-retries=5 \
+    --fetch-retry-mintimeout=20000 \
+    --fetch-retry-maxtimeout=120000
 
 COPY . .
 
