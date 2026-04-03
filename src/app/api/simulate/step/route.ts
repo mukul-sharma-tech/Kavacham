@@ -8,11 +8,8 @@ import {
 import { propagate } from "@/lib/physics/propagator";
 import { applyBurn, isInStationBox, needsEOL, calculateGraveyardBurn } from "@/lib/maneuver/cola";
 import { assessConjunctions } from "@/lib/spatial/conjunction";
-import { vec3 } from "@/lib/physics/vector";
-import { CRITICAL_MISS_KM, LOOKAHEAD_S } from "@/lib/physics/constants";
-import { optimizeGlobalBurns, optimizeEmergencyBurns, preloadBlackoutSequences } from "@/lib/optimizer/global";
-import { parseSatelliteIdFromBurnId } from "@/lib/maneuver/burnId";
-import { trimAppendGroundTrack } from "@/lib/telemetry/groundTrack";
+import { vec3, rtnToEci } from "@/lib/physics/vector";
+import { CRITICAL_MISS_KM, COOLDOWN_S, SIGNAL_LATENCY_S } from "@/lib/physics/constants";
 
 const SUB_STEP_S = 60;
 
@@ -31,7 +28,6 @@ export async function POST(req: NextRequest) {
 
     let maneuversExecuted = 0;
     let collisionsDetected = 0;
-    let burnsScheduled = 0;
 
     let currentMs = startMs;
     const subStepMs = SUB_STEP_S * 1000;
@@ -58,14 +54,7 @@ export async function POST(req: NextRequest) {
         for (const burn of pending) {
           const dtToBurn = (burn.burnTime - currentMs) / 1000;
           if (dtToBurn > 0) s = { ...s, state: propagate(s.state, dtToBurn) };
-          if (
-            burn.deltaV?.x === undefined ||
-            burn.deltaV?.y === undefined ||
-            burn.deltaV?.z === undefined
-          ) {
-            burn.executed = true;
-            continue;
-          }
+          if (!burn.deltaV || burn.deltaV.x === undefined) { burn.executed = true; continue; }
           s = applyBurn(s, burn.deltaV, burn.burnTime);
           burn.executed = true;
           maneuversExecuted++;
@@ -75,7 +64,7 @@ export async function POST(req: NextRequest) {
         const dtRem = dtS - pending.reduce((acc, b) => Math.max(acc, Math.max(0, (b.burnTime - currentMs) / 1000)), 0);
         if (dtRem > 0 && s.state?.r) s = { ...s, state: propagate(s.state, dtRem) };
 
-        // Propagate nominal slot with satellite
+        // Propagate nominal slot
         if (s.nominalSlot?.r) s.nominalSlot = propagate(s.nominalSlot, dtS);
 
         // Station-keeping status
@@ -93,7 +82,7 @@ export async function POST(req: NextRequest) {
         }
 
         s.timestamp = nextMs;
-        updateSatellite(trimAppendGroundTrack(s, nextMs));
+        updateSatellite(s);
       }
 
       // 3. Collision detection
@@ -111,32 +100,51 @@ export async function POST(req: NextRequest) {
       }
 
       currentMs = nextMs;
-
-      // Keep sim clock aligned so COLA / cooldown logic see the correct "now"
-      advanceTime(nextMs);
-
-      // Autonomous COLA + station-keeping (same pipeline as realtimeEngine)
-      const satsNow = getAllSatellites();
-      const debrisNow = getAllDebris();
-      const warnings = assessConjunctions(satsNow, debrisNow, nextMs, LOOKAHEAD_S);
-      setWarnings(warnings);
-
-      const critical = warnings.filter((w) => w.missDistance < CRITICAL_MISS_KM);
-      const optimalBurns =
-        critical.length > 0 ? optimizeEmergencyBurns() : optimizeGlobalBurns();
-
-      for (const burn of optimalBurns) {
-        const satId = parseSatelliteIdFromBurnId(burn.burnId);
-        if (satId && scheduleBurns(satId, [burn])) burnsScheduled++;
-      }
-
-      for (const burn of preloadBlackoutSequences()) {
-        const satId = parseSatelliteIdFromBurnId(burn.burnId);
-        if (satId && scheduleBurns(satId, [burn])) burnsScheduled++;
-      }
     }
 
-    const finalWarnings = getState().activeWarnings;
+    advanceTime(endMs);
+
+    // Conjunction assessment — 1 hour lookahead for performance
+    const sats = getAllSatellites();
+    const debris = getAllDebris();
+    const warnings = assessConjunctions(sats, debris, endMs, 3600);
+    setWarnings(warnings);
+
+    // Auto-schedule evasion for critical conjunctions (< 100m)
+    let burnsScheduled = 0;
+    for (const w of warnings.filter(w => w.missDistance < CRITICAL_MISS_KM)) {
+      const sat = sats.find(s => s.id === w.satelliteId);
+      if (!sat || sat.status === "EOL" || !sat.state?.r) continue;
+      const hasPending = sat.scheduledManeuvers.some(b => !b.executed);
+      const inCooldown = sat.lastBurnTime > 0 && (endMs - sat.lastBurnTime) < COOLDOWN_S * 1000;
+      if (hasPending || inCooldown) continue;
+
+      const tcaS = (w.tca - endMs) / 1000;
+      if (tcaS < SIGNAL_LATENCY_S + 5) continue;
+
+      // CW minimum Δv calculation
+      const rMag = vec3.mag(sat.state.r);
+      const n = Math.sqrt(398600.4418 / (rMag ** 3));
+      const tToTca = tcaS - SIGNAL_LATENCY_S;
+      const cwFactor = (2 / n) * Math.sin(n * tToTca) + 3 * tToTca;
+      const targetSep = Math.max(0, 0.20 - w.missDistance) + 0.05;
+      const dvKmS = cwFactor > 0 ? Math.min(targetSep / cwFactor, 0.015) : 0.005;
+
+      const dvECI = rtnToEci({ x: 0, y: dvKmS, z: 0 }, sat.state.r, sat.state.v);
+      const burnTime = endMs + SIGNAL_LATENCY_S * 1000;
+
+      scheduleBurns(sat.id, [
+        { burnId: `AUTO_EVASION_${sat.id}_${Date.now()}`, burnTime, deltaV: dvECI, executed: false },
+        {
+          burnId: `AUTO_RECOVERY_${sat.id}_${Date.now() + 1}`,
+          burnTime: burnTime + COOLDOWN_S * 1000,
+          deltaV: { x: -dvECI.x * 0.97, y: -dvECI.y * 0.97, z: -dvECI.z * 0.97 },
+          executed: false,
+        },
+      ]);
+      burnsScheduled++;
+    }
+
     markSnapshotDirty();
 
     return NextResponse.json({
@@ -145,7 +153,7 @@ export async function POST(req: NextRequest) {
       collisions_detected: collisionsDetected,
       maneuvers_executed: maneuversExecuted,
       burns_scheduled: burnsScheduled,
-      active_warnings: finalWarnings.length,
+      active_warnings: warnings.length,
     });
   } catch (err) {
     console.error("[simulate/step]", err);

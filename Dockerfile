@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /app 
 
 # Copy package files
 COPY package.json package-lock.json* ./
