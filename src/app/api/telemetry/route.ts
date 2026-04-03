@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upsertObject, setWarnings, getState, getAllSatellites, getAllDebris } from "@/lib/state/store";
+import { upsertObject, setWarnings, getState, getAllSatellites, getAllDebris, setGroundStations, markSnapshotDirty } from "@/lib/state/store";
 import { assessConjunctions } from "@/lib/spatial/conjunction";
 import { GROUND_STATIONS } from "@/lib/comms/groundStations";
-import { setGroundStations } from "@/lib/state/store";
 import type { SpaceObject } from "@/lib/physics/types";
 
 // Initialize ground stations once
 setGroundStations(GROUND_STATIONS);
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -43,6 +41,7 @@ export async function POST(req: NextRequest) {
     const debris = getAllDebris();
     const warnings = assessConjunctions(satellites, debris, ts);
     setWarnings(warnings);
+    markSnapshotDirty();
 
     return NextResponse.json({
       status: "ACK",

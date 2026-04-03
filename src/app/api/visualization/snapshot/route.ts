@@ -1,37 +1,31 @@
 import { NextResponse } from "next/server";
 import { getState, getAllSatellites, getAllDebris } from "@/lib/state/store";
+import { isSnapshotDirty, clearSnapshotDirty } from "@/lib/state/store";
 import { eciToGeodetic, computeGMST, propagateN } from "@/lib/physics/propagator";
 import { vec3 } from "@/lib/physics/vector";
 import { STATION_BOX_KM } from "@/lib/physics/constants";
 
-// Simple cache: avoid recomputing if sim time hasn't changed
+// Cache: invalidate when sim time changes OR after any write operation
 let _cacheTime = -1;
 let _cacheBody = "";
+let _cacheInvalidated = false;
 
 export async function GET() {
   const state = getState();
 
-  // Return cached response if sim time unchanged
-  if (state.currentTimeMs === _cacheTime && _cacheBody) {
+  // Return cached response if sim time unchanged and not dirty
+  if (state.currentTimeMs === _cacheTime && _cacheBody && !isSnapshotDirty()) {
     return new Response(_cacheBody, {
       headers: { "Content-Type": "application/json", "X-Cache": "HIT" },
     });
   }
+  clearSnapshotDirty();
 
   const gmst = computeGMST(state.currentTimeMs);
 
   const satellites = getAllSatellites().map((sat) => {
     const geo = eciToGeodetic(sat.state.r, gmst);
     const distFromSlot = vec3.dist(sat.state.r, sat.nominalSlot.r);
-
-    // Predicted trajectory: next 90 min at 10-min intervals (9 points)
-    const predicted: Array<[number, number]> = [];
-    let predState = sat.state;
-    for (let i = 1; i <= 9; i++) {
-      predState = propagateN(predState, 600, 60); // 10 min steps
-      const g = eciToGeodetic(predState.r, computeGMST(state.currentTimeMs + i * 600000));
-      predicted.push([parseFloat(g.lat.toFixed(3)), parseFloat(g.lon.toFixed(3))]);
-    }
 
     return {
       id: sat.id,
@@ -42,7 +36,6 @@ export async function GET() {
       status: sat.status,
       slot_drift_km: parseFloat(distFromSlot.toFixed(3)),
       in_box: distFromSlot <= STATION_BOX_KM,
-      predicted_track: predicted,
     };
   });
 

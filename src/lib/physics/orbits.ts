@@ -87,17 +87,17 @@ export function generateDebris(count: number, satellites: Array<{ state: StateVe
   const closeCount = Math.min(Math.floor(count * 0.3), satellites.length);
   for (let i = 0; i < closeCount; i++) {
     const sat = satellites[i % satellites.length];
-    // Place debris 2-5 km ahead in the orbit (same direction)
-    // with slightly higher velocity so it catches up over ~10 minutes
-    const speedFactor = 1.0 + rng(0.0005, 0.002); // 0.05-0.2% faster = catches up
+    // Place debris very close (0.05-0.25 km) ahead in orbit with a stronger speed bias,
+    // so one of the nearest objects quickly becomes a conjunction alert.
+    const speedFactor = 1.0 + rng(0.0015, 0.0035); // 0.15-0.35% faster = catches up faster
     debris.push({
       id: `DEB-CLOSE-${String(i + 1).padStart(3, "0")}`,
       type: "DEBRIS" as const,
       state: {
         r: {
-          x: sat.state.r.x + sat.state.v.x * rng(30, 120), // 30-120s ahead in orbit
-          y: sat.state.r.y + sat.state.v.y * rng(30, 120),
-          z: sat.state.r.z + sat.state.v.z * rng(30, 120),
+          x: sat.state.r.x + sat.state.v.x * rng(3, 12), // 3-12s ahead in orbit
+          y: sat.state.r.y + sat.state.v.y * rng(3, 12),
+          z: sat.state.r.z + sat.state.v.z * rng(3, 12),
         },
         v: {
           x: sat.state.v.x * speedFactor,

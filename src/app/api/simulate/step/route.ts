@@ -5,13 +5,10 @@ import {
   incrementCollisions, addOutageSeconds, setWarnings, scheduleBurns,
 } from "@/lib/state/store";
 import { propagate } from "@/lib/physics/propagator";
-import { applyBurn, isInStationBox, needsEOL, calculateGraveyardBurn, calculateStationKeepingBurn } from "@/lib/maneuver/cola";
+import { applyBurn, isInStationBox, needsEOL, calculateGraveyardBurn } from "@/lib/maneuver/cola";
 import { assessConjunctions } from "@/lib/spatial/conjunction";
 import { vec3 } from "@/lib/physics/vector";
-import { CRITICAL_MISS_KM, COOLDOWN_S } from "@/lib/physics/constants";
-import { getUploadWindow } from "@/lib/comms/los";
-import { GROUND_STATIONS } from "@/lib/comms/groundStations";
-import { optimizeGlobalBurns, optimizeEmergencyBurns } from "@/lib/optimizer/global";
+import { CRITICAL_MISS_KM } from "@/lib/physics/constants";
 
 const SUB_STEP_S = 60;
 
@@ -38,81 +35,62 @@ export async function POST(req: NextRequest) {
       const nextMs = Math.min(currentMs + subStepMs, endMs);
       const dtS = (nextMs - currentMs) / 1000;
 
-      // 1. Propagate all debris
+      // 1. Propagate debris
       for (const [id, deb] of state.debris) {
         if (!deb.state?.r) continue;
-        state.debris.set(id, {
-          ...deb,
-          state: propagate(deb.state, dtS),
-          timestamp: nextMs,
-        });
+        state.debris.set(id, { ...deb, state: propagate(deb.state, dtS), timestamp: nextMs });
       }
 
-      // 2. Propagate satellites + execute burns
+      // 2. Propagate satellites + execute scheduled burns
       for (const [id, sat] of state.satellites) {
-        let updatedSat = { ...sat };
+        if (!sat.state?.r) continue;
+        let s = { ...sat };
 
-        const pendingBurns = updatedSat.scheduledManeuvers.filter(
+        const pending = s.scheduledManeuvers.filter(
           (b) => !b.executed && b.burnTime >= currentMs && b.burnTime < nextMs
         );
 
-        for (const burn of pendingBurns) {
+        for (const burn of pending) {
+          if (!burn.deltaV?.x === undefined) continue;
           const dtToBurn = (burn.burnTime - currentMs) / 1000;
-          if (dtToBurn > 0) {
-            updatedSat = { ...updatedSat, state: propagate(updatedSat.state, dtToBurn) };
-          }
-          updatedSat = applyBurn(updatedSat, burn.deltaV, burn.burnTime);
+          if (dtToBurn > 0) s = { ...s, state: propagate(s.state, dtToBurn) };
+          s = applyBurn(s, burn.deltaV, burn.burnTime);
           burn.executed = true;
           maneuversExecuted++;
-          logManeuver({
-            burnId: burn.burnId,
-            satelliteId: id,
-            executedAt: burn.burnTime,
-            dvMs: vec3.mag(burn.deltaV) * 1000,
-          });
+          logManeuver({ burnId: burn.burnId, satelliteId: id, executedAt: burn.burnTime, dvMs: vec3.mag(burn.deltaV) * 1000 });
         }
 
-        const dtRemaining = dtS - pendingBurns.reduce((acc, b) => {
-          const dt = (b.burnTime - currentMs) / 1000;
-          return Math.max(acc, dt > 0 ? dt : 0);
-        }, 0);
+        const dtRem = dtS - pending.reduce((acc, b) => Math.max(acc, Math.max(0, (b.burnTime - currentMs) / 1000)), 0);
+        if (dtRem > 0 && s.state?.r) s = { ...s, state: propagate(s.state, dtRem) };
 
-        if (dtRemaining > 0) {
-          updatedSat = { ...updatedSat, state: propagate(updatedSat.state, dtRemaining) };
-        }
+        // Propagate nominal slot with satellite
+        if (s.nominalSlot?.r) s.nominalSlot = propagate(s.nominalSlot, dtS);
 
-        // Propagate nominal slot
-        updatedSat.nominalSlot = propagate(updatedSat.nominalSlot, dtS);
-
-        // Station-keeping outage tracking
-        if (!isInStationBox(updatedSat)) {
+        // Station-keeping status
+        if (!isInStationBox(s)) {
           addOutageSeconds(dtS);
-          if (updatedSat.status === "NOMINAL") {
-            updatedSat = { ...updatedSat, status: "RECOVERING" };
-          }
-        } else if (updatedSat.status === "RECOVERING") {
-          updatedSat = { ...updatedSat, status: "NOMINAL" };
+          if (s.status === "NOMINAL") s = { ...s, status: "RECOVERING" };
+        } else if (s.status === "RECOVERING") {
+          s = { ...s, status: "NOMINAL" };
         }
 
-        // EOL check: schedule graveyard burn if fuel critical
-        if (needsEOL(updatedSat) && updatedSat.status !== "EOL") {
-          const gravBurn = calculateGraveyardBurn(updatedSat, nextMs);
-          if (gravBurn) {
-            updatedSat = { ...updatedSat, status: "EOL" };
-            updateSatellite(updatedSat);
-            scheduleBurns(id, [gravBurn]);
-          }
+        // EOL graveyard burn
+        if (needsEOL(s) && s.status !== "EOL") {
+          const gb = calculateGraveyardBurn(s, nextMs);
+          if (gb) { s = { ...s, status: "EOL" }; scheduleBurns(id, [gb]); }
         }
 
-        updatedSat.timestamp = nextMs;
-        updateSatellite(updatedSat);
+        s.timestamp = nextMs;
+        updateSatellite(s);
       }
 
       // 3. Collision detection
       const sats = getAllSatellites();
       const debris = getAllDebris();
       for (const sat of sats) {
+        if (!sat.state?.r) continue;
         for (const deb of debris) {
+          if (!deb.state?.r) continue;
           if (vec3.dist(sat.state.r, deb.state.r) < CRITICAL_MISS_KM) {
             collisionsDetected++;
             incrementCollisions();
@@ -125,37 +103,19 @@ export async function POST(req: NextRequest) {
 
     advanceTime(endMs);
 
-    // Re-run conjunction assessment
+    // Conjunction assessment — use 1-hour lookahead for performance
+    // (24h lookahead with 10s steps = 300k propagations, too slow)
     const sats = getAllSatellites();
     const debris = getAllDebris();
-    const warnings = assessConjunctions(sats, debris, endMs);
+    const warnings = assessConjunctions(sats, debris, endMs, 3600);
     setWarnings(warnings);
-
-    // Use global optimizer for constellation-wide burn decisions
-    let optimalBurns: ReturnType<typeof optimizeGlobalBurns> = [];
-
-    // Emergency mode for critical conjunctions
-    const criticalWarnings = warnings.filter(w => w.missDistance < CRITICAL_MISS_KM);
-    if (criticalWarnings.length > 0) {
-      optimalBurns = optimizeEmergencyBurns();
-    } else {
-      // Normal optimization balancing fuel vs uptime
-      optimalBurns = optimizeGlobalBurns();
-    }
-
-    // Schedule the optimized burns
-    for (const burn of optimalBurns) {
-      const satId = burn.burnId.split('_')[1]; // Extract satellite ID from burn ID
-      scheduleBurns(satId, [burn]);
-    }
 
     return NextResponse.json({
       status: "STEP_COMPLETE",
       new_timestamp: new Date(endMs).toISOString(),
       collisions_detected: collisionsDetected,
       maneuvers_executed: maneuversExecuted,
-      burns_scheduled: optimalBurns.length,
-      optimization_mode: criticalWarnings.length > 0 ? "emergency" : "global",
+      active_warnings: warnings.length,
     });
   } catch (err) {
     console.error("[simulate/step]", err);

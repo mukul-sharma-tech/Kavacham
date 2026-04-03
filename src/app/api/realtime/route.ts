@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startRealtime, stopRealtime, isRunning } from "@/lib/state/realtimeEngine";
+import { startRealtime, stopRealtime, isRunning, getSpeedMultiplier, setSpeedMultiplier } from "@/lib/state/realtimeEngine";
 import { upsertObject, getState, resetState } from "@/lib/state/store";
 import { generateConstellation, generateDebris } from "@/lib/physics/orbits";
 import type { SpaceObject } from "@/lib/physics/types";
@@ -34,9 +34,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "STOPPED" });
   }
 
+  if (action === "speed") {
+    const speed = (body as { speed?: number }).speed;
+    if (typeof speed === "number") {
+      const success = setSpeedMultiplier(speed);
+      if (success) {
+        return NextResponse.json({ status: "SPEED_SET", speed_multiplier: speed });
+      } else {
+        return NextResponse.json({ error: "Invalid speed value" }, { status: 400 });
+      }
+    }
+  }
+
   return NextResponse.json({ running: isRunning(), sim_time: new Date(getState().currentTimeMs).toISOString() });
 }
 
 export async function GET() {
-  return NextResponse.json({ running: isRunning(), sim_time: new Date(getState().currentTimeMs).toISOString() });
+  return NextResponse.json({
+    running: isRunning(),
+    sim_time: new Date(getState().currentTimeMs).toISOString(),
+    speed_multiplier: getSpeedMultiplier()
+  });
 }

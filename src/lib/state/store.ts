@@ -111,3 +111,9 @@ export function resetState(): void {
 export function getAllSatellites(): Satellite[] {
   return Array.from(state.satellites.values());
 }
+
+// Snapshot cache invalidation flag — set by write operations, read by snapshot route
+let _snapshotDirty = false;
+export function markSnapshotDirty() { _snapshotDirty = true; }
+export function isSnapshotDirty() { return _snapshotDirty; }
+export function clearSnapshotDirty() { _snapshotDirty = false; }

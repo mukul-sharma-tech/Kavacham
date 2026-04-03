@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { generateConstellation, generateDebris } from "@/lib/physics/orbits";
 
 const SAT_COUNT_OPTIONS = [1, 2, 3, 5, 10, 20, 30, 50];
@@ -40,6 +40,11 @@ export default function ControlPanel({ onDataLoaded }: { onDataLoaded?: () => vo
       setLog(String(e));
     }
   }
+
+  // Auto-load constellation on component mount
+  useEffect(() => {
+    loadConstellation();
+  }, []);
 
   function loadConstellation() {
     const sats = generateConstellation(satCount);
@@ -208,16 +213,6 @@ export default function ControlPanel({ onDataLoaded }: { onDataLoaded?: () => vo
           </div>
           <button className={cls("burn")} onClick={scheduleBurn}>Schedule Burn</button>
           <button className={cls("burnstep", "btn btn-primary")} onClick={burnAndStep}>🔥 Burn + Step 60s</button>
-        </div>
-      </Sec>
-
-      {/* ── Autonomy ── */}
-      <Sec title="Autonomy">
-        <button className={cls("cola")} onClick={() => call("cola", "/api/cola/auto")}>
-          🛡 Trigger Auto-Evasion
-        </button>
-        <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "5px" }}>
-          Auto-schedules burns for critical conjunctions
         </div>
       </Sec>
 

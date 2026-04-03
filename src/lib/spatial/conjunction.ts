@@ -8,7 +8,7 @@ import { vec3 } from "../physics/vector";
 import { CRITICAL_MISS_KM, WARN_MISS_KM, LOOKAHEAD_S } from "../physics/constants";
 import type { SpaceObject, CDMWarning, StateVector } from "../physics/types";
 
-const SCAN_STEP_S = 30;    // coarse scan step
+const SCAN_STEP_S = 10;    // coarse scan step — fine enough to catch fast-closing debris
 const REFINE_STEP_S = 1;   // fine refinement step
 
 /**

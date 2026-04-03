@@ -14,7 +14,7 @@ import { GROUND_STATIONS } from "../comms/groundStations";
 import { optimizeGlobalBurns, optimizeEmergencyBurns, preloadBlackoutSequences } from "../optimizer/global";
 
 const TICK_MS = 1000;          // wall-clock tick interval
-const SIM_STEP_S = 30;         // sim seconds per tick (30x speed)
+let SIM_STEP_S = 60;         // sim seconds per tick (60x speed) - now configurable
 const COLA_INTERVAL_TICKS = 5; // run COLA every 5 ticks
 
 let _running = false;
@@ -22,6 +22,14 @@ let _tickCount = 0;
 let _intervalId: ReturnType<typeof setInterval> | null = null;
 
 export function isRunning() { return _running; }
+
+export function getSpeedMultiplier() { return SIM_STEP_S; }
+
+export function setSpeedMultiplier(secondsPerTick: number) {
+  if (secondsPerTick < 1 || secondsPerTick > 3600) return false; // reasonable bounds
+  SIM_STEP_S = secondsPerTick;
+  return true;
+}
 
 export function startRealtime() {
   if (_running) return;
@@ -78,7 +86,7 @@ function tick() {
     const dtRem = dtS - pending.reduce((acc, b) => Math.max(acc, Math.max(0, (b.burnTime - nowMs) / 1000)), 0);
     if (dtRem > 0 && s.state?.r && s.state?.v) s = { ...s, state: propagate(s.state, dtRem) };
 
-    // Propagate nominal slot
+    // Propagate nominal slot — keep it on the reference orbit
     s.nominalSlot = propagate(s.nominalSlot, dtS);
 
     // Station-keeping
@@ -131,16 +139,19 @@ function tick() {
 
     // Schedule the optimized burns
     for (const burn of optimalBurns) {
-      const satId = burn.burnId.split('_')[1]; // Extract satellite ID from burn ID
-      scheduleBurns(satId, [burn]);
+      // Extract satellite ID from burn ID patterns:
+      // EVASION_SAT-001_123, RECOVERY_SAT-001_123, STATION_KEEPING_SAT-001_123, GRAVEYARD_SAT-001_123
+      const match = burn.burnId.match(/(?:EVASION|RECOVERY|GRAVEYARD|STATION_KEEPING|AUTONOMOUS_[A-Z_]+)_([^_]+(?:-[^_]+)*?)_\d/);
+      const satId = match ? match[1] : null;
+      if (satId) scheduleBurns(satId, [burn]);
     }
 
     // Preload blackout sequences for satellites approaching communication dead zones
     const blackoutBurns = preloadBlackoutSequences();
     for (const burn of blackoutBurns) {
-      // Extract satellite ID from AUTONOMOUS_*_SAT-XXX_* format
-      const parts = burn.burnId.split('_');
-      const satId = parts.find(part => part.startsWith('SAT-'));
+      // Extract satellite ID using same pattern as COLA burns
+      const match = burn.burnId.match(/(?:EVASION|RECOVERY|GRAVEYARD|STATION_KEEPING|AUTONOMOUS_[A-Z_]+)_([^_]+(?:-[^_]+)*?)_\d/);
+      const satId = match ? match[1] : null;
       if (satId) {
         scheduleBurns(satId, [burn]);
       }

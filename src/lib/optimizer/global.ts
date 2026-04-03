@@ -130,21 +130,20 @@ export function optimizeGlobalBurns(): ManeuverBurn[] {
 
     if (hasPending || inCooldown) continue;
 
-    // Check for available LOS within next 30 minutes for burn upload
-    const losInfo = getUploadWindow(sat.state.r, sat.state.v, GROUND_STATIONS, nowMs + 1800000, nowMs);
-    if (!losInfo.canUpload) continue;
-
-    // Evaluate station-keeping opportunity
+    // Station-keeping: fire whenever outside the 10km box
     const drift = vec3.dist(sat.state.r, sat.nominalSlot.r);
     if (drift > STATION_BOX_KM) {
       const skBurn = calculateStationKeepingBurn(sat, nowMs);
       if (skBurn) {
         const decision = evaluateBurnDecision(sat, skBurn, "station-keeping", globalState);
-        if (decision && decision.netBenefit > -500) { // Lower threshold for station-keeping
-          decisions.push(decision);
-        }
+        if (decision) decisions.push(decision); // always include station-keeping
       }
     }
+
+    // *** EVASION BURNS: REQUIRE LOS (ground control approval) ***
+    // Check for available LOS within next 30 minutes for burn upload
+    const losInfo = getUploadWindow(sat.state.r, sat.state.v, GROUND_STATIONS, nowMs + 1800000, nowMs);
+    if (!losInfo.canUpload) continue; // Skip evasion if no LOS
 
     // Evaluate evasion opportunities
     const satWarnings = globalState.warnings.filter(w => w.satelliteId === sat.id && w.missDistance < 1.0);
@@ -186,6 +185,27 @@ export function optimizeGlobalBurns(): ManeuverBurn[] {
     }
   }
 
+  // Fallback: only fire station-keeping if drift is very large (> 50 km)
+  // This prevents spurious burns right after loading
+  if (selectedBurns.length === 0) {
+    for (const sat of globalState.satellites) {
+      if (sat.status === "EOL") continue;
+      const nowMs = globalState.currentTimeMs;
+      const hasPending = sat.scheduledManeuvers.some(b => !b.executed);
+      const inCooldown = sat.lastBurnTime > 0 && (nowMs - sat.lastBurnTime) < COOLDOWN_S * 1000;
+      if (hasPending || inCooldown) continue;
+
+      const drift = vec3.dist(sat.state.r, sat.nominalSlot.r);
+      if (drift > 15.0) { // Fire station-keeping when meaningfully outside the 10km box
+        const skBurn = calculateStationKeepingBurn(sat, nowMs);
+        if (skBurn) {
+          selectedBurns.push(skBurn);
+          break;
+        }
+      }
+    }
+  }
+
   return selectedBurns;
 }
 
@@ -202,6 +222,11 @@ export function optimizeEmergencyBurns(): ManeuverBurn[] {
   for (const warning of criticalWarnings) {
     const sat = globalState.satellites.find(s => s.id === warning.satelliteId);
     if (!sat || sat.status === "EOL") continue;
+
+    // Check cooldown before scheduling emergency burns
+    const hasPending = sat.scheduledManeuvers.some(b => !b.executed);
+    const inCooldown = sat.lastBurnTime > 0 && (globalState.currentTimeMs - sat.lastBurnTime) < COOLDOWN_S * 1000;
+    if (hasPending || inCooldown) continue;
 
     const sequence = calculateEvasionSequence(sat, warning, globalState.currentTimeMs);
     if (sequence) {
