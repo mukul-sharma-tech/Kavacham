@@ -36,7 +36,12 @@ export function upsertObject(obj: SpaceObject): void {
   if (obj.type === "SATELLITE") {
     const existing = state.satellites.get(obj.id);
     if (existing) {
-      state.satellites.set(obj.id, { ...existing, state: obj.state, timestamp: obj.timestamp });
+      state.satellites.set(obj.id, {
+        ...existing,
+        state: obj.state,
+        timestamp: obj.timestamp,
+        groundTrackHistory: existing.groundTrackHistory,
+      });
     } else {
       // New satellite - initialize with defaults
       state.satellites.set(obj.id, {

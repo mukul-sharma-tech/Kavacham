@@ -110,8 +110,25 @@ export default function OrbitalMap({ snapshot, selectedSat, onSelectSat }: Props
         ctx!.fillStyle = "rgba(255,255,255,0.35)"; ctx!.font = "9px system-ui"; ctx!.fillText(gs.name, x + 5, y + 3);
       }
 
-      // Debris — red pulsing dots
-      for (const [, lat, lon] of snap.debris_cloud) {
+      // Historical trails (~90 min sim) — behind debris
+      for (const sat of snap.satellites) {
+        const th = sat.trail_history;
+        if (!th || th.length < 2) continue;
+        ctx!.strokeStyle = "rgba(148,163,184,0.55)";
+        ctx!.lineWidth = 1.2;
+        ctx!.setLineDash([4, 4]);
+        ctx!.beginPath();
+        ctx!.moveTo(mX(th[0][1], W), mY(th[0][0], H));
+        for (let i = 1; i < th.length; i++) ctx!.lineTo(mX(th[i][1], W), mY(th[i][0], H));
+        ctx!.stroke();
+        ctx!.setLineDash([]);
+      }
+
+      // Debris — red pulsing dots (cap draw count for 10k+ objects @ FPS)
+      const dc = snap.debris_cloud;
+      const stride = dc.length > 4000 ? Math.ceil(dc.length / 4000) : 1;
+      for (let di = 0; di < dc.length; di += stride) {
+        const [, lat, lon] = dc[di];
         const x = mX(lon as number, W), y = mY(lat as number, H);
         if (y < 0 || y > H) continue;
         const pulse = 0.5 + 0.4 * Math.sin(frameCount.current * 0.05 + x * 0.01);

@@ -6,7 +6,7 @@
 import { getAllSatellites, getState } from "../state/store";
 import { calculateEvasionSequence, calculateStationKeepingBurn, propellantConsumed } from "../maneuver/cola";
 import { vec3 } from "../physics/vector";
-import { STATION_BOX_KM, INITIAL_FUEL, COOLDOWN_S, MAX_DV, DRY_MASS } from "../physics/constants";
+import { STATION_BOX_KM, INITIAL_FUEL, COOLDOWN_S, MAX_DV, DRY_MASS, CRITICAL_MISS_KM } from "../physics/constants";
 import { getUploadWindow, hasAnyLOS } from "../comms/los";
 import { GROUND_STATIONS } from "../comms/groundStations";
 import type { Satellite, CDMWarning, ManeuverBurn } from "../physics/types";
@@ -140,12 +140,14 @@ export function optimizeGlobalBurns(): ManeuverBurn[] {
       }
     }
 
-    // *** EVASION BURNS: REQUIRE LOS (ground control approval) ***
-    // Check for available LOS within next 30 minutes for burn upload
+    // Evasion burns: prefer upload while in LOS; autonomous COLA still fires for critical (<100m) misses
     const losInfo = getUploadWindow(sat.state.r, sat.state.v, GROUND_STATIONS, nowMs + 1800000, nowMs);
-    if (!losInfo.canUpload) continue; // Skip evasion if no LOS
+    const hasCritical = globalState.warnings.some(
+      (w) => w.satelliteId === sat.id && w.missDistance < CRITICAL_MISS_KM
+    );
+    if (!losInfo.canUpload && !hasCritical) continue;
 
-    // Evaluate evasion opportunities
+    // Evaluate evasion opportunities (predicted conjunctions under ~1 km miss)
     const satWarnings = globalState.warnings.filter(w => w.satelliteId === sat.id && w.missDistance < 1.0);
     for (const warning of satWarnings) {
       const evasionSequence = calculateEvasionSequence(sat, warning, nowMs);
@@ -165,7 +167,10 @@ export function optimizeGlobalBurns(): ManeuverBurn[] {
   const usedSatellites = new Set<string>();
 
   for (const decision of decisions) {
-    if (!usedSatellites.has(decision.satelliteId) && decision.netBenefit > 0) {
+    const accept =
+      decision.burnType === "station-keeping" ||
+      decision.netBenefit > 0;
+    if (!usedSatellites.has(decision.satelliteId) && accept) {
       selectedBurns.push(decision.burn);
       usedSatellites.add(decision.satelliteId);
 
@@ -217,7 +222,7 @@ export function optimizeEmergencyBurns(): ManeuverBurn[] {
   const emergencyBurns: ManeuverBurn[] = [];
 
   // Prioritize critical conjunctions (< 100m)
-  const criticalWarnings = globalState.warnings.filter(w => w.missDistance < 0.1);
+  const criticalWarnings = globalState.warnings.filter(w => w.missDistance < CRITICAL_MISS_KM);
 
   for (const warning of criticalWarnings) {
     const sat = globalState.satellites.find(s => s.id === warning.satelliteId);

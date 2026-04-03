@@ -15,11 +15,13 @@ export default function FuelHeatmap({ snapshot }: { snapshot: SnapshotData | nul
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div className="card-header">Fleet Health</div>
+      <div style={{ padding: "10px 12px 6px", fontSize: "11px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        Fleet Health
+      </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: "8px" }}>
 
         {sats.length === 0 && (
-          <div style={{ color: "var(--text-muted)", fontSize: "12px", textAlign: "center", paddingTop: "16px" }}>
+          <div style={{ color: "#6b7280", fontSize: "12px", textAlign: "center", paddingTop: "16px" }}>
             No data
           </div>
         )}
@@ -31,18 +33,18 @@ export default function FuelHeatmap({ snapshot }: { snapshot: SnapshotData | nul
 
           return (
             <div key={sat.id} style={{
-              background: "var(--bg)",
+              background: "#0f1117",
               borderRadius: "8px",
               padding: "8px 10px",
-              border: "1px solid var(--border)",
+              border: "1px solid #2a2d3e",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                <span style={{ fontSize: "11px", fontWeight: "600", color: "var(--text)" }}>{sat.id}</span>
+                <span style={{ fontSize: "11px", fontWeight: "600", color: "#e8eaf0" }}>{sat.id}</span>
                   {fuelPct.toFixed(2)}%
               </div>
 
               {/* Fuel bar */}
-              <div style={{ height: "6px", background: "var(--surface2)", borderRadius: "4px", overflow: "hidden", marginBottom: "5px" }}>
+              <div style={{ height: "6px", background: "#1a1d27", borderRadius: "4px", overflow: "hidden", marginBottom: "5px" }}>
                 <div style={{
                   width: `${fuelPct}%`, height: "100%",
                   background: `linear-gradient(90deg, ${fuelColor}, ${fuelColor}aa)`,
@@ -50,7 +52,7 @@ export default function FuelHeatmap({ snapshot }: { snapshot: SnapshotData | nul
                 }} />
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--text-muted)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#6b7280" }}>
                 <span>{sat.fuel_kg.toFixed(3)} kg remaining</span>
                 {dv > 0 && <span style={{ color: "#818cf8" }}>Δv {dv.toFixed(3)} m/s used</span>}
               </div>
@@ -65,9 +67,9 @@ export default function FuelHeatmap({ snapshot }: { snapshot: SnapshotData | nul
             background: "rgba(99,102,241,0.07)",
             borderRadius: "8px", border: "1px solid rgba(99,102,241,0.2)",
           }}>
-            <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>Fleet Average</div>
+            <div style={{ fontSize: "10px", color: "#6b7280", marginBottom: "4px" }}>Fleet Average</div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-              <span style={{ color: "var(--text)" }}>
+              <span style={{ color: "#e8eaf0" }}>
                 {(sats.reduce((a, s) => a + s.fuel_kg, 0) / sats.length).toFixed(1)} kg avg
               </span>
               <span style={{ color: "#818cf8" }}>

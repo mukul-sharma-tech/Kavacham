@@ -12,8 +12,8 @@ export const ISP = 300.0;            // s
 export const MAX_DV = 15.0;          // m/s per burn
 export const COOLDOWN_S = 600;       // seconds between burns
 
-// Conjunction thresholds
-export const CRITICAL_MISS_KM = 0.1;   // 100 meters
+// Conjunction thresholds (problem statement: critical < 100 m)
+export const CRITICAL_MISS_KM = 0.1;   // 100 m — physical collision / mandatory evasion
 export const WARN_MISS_KM = 5.0;       // 5 km warning
 export const STATION_BOX_KM = 10.0;   // 10 km station-keeping radius
 export const FUEL_CRITICAL_PCT = 0.05; // 5% fuel threshold for EOL

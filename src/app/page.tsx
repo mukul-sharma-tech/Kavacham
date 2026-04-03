@@ -2,20 +2,49 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import OrbitalMap from "@/components/OrbitalMap";
 import BurnAlert from "@/components/BurnAlert";
+import BullseyePlot from "@/components/BullseyePlot";
+import ManeuverTimeline from "@/components/ManeuverTimeline";
+import FuelHeatmap from "@/components/FuelHeatmap";
+import EfficiencyChart from "@/components/EfficiencyChart";
 
 export interface SnapshotData {
   timestamp: string;
   satellites: Array<{
     id: string; lat: number; lon: number; alt: number;
     fuel_kg: number; status: string; slot_drift_km: number; in_box: boolean;
-    predicted_track: Array<[number, number]>;
+    trail_history?: Array<[number, number]>;
+    predicted_track?: Array<[number, number]>;
+    last_burn_iso?: string | null;
   }>;
   debris_cloud: Array<[string, number, number, number]>;
+  debris_total?: number;
   active_warnings: Array<{ sat: string; deb: string; tca: string; miss_km: number; rel_v_kms: number }>;
+  scheduled_burns?: Array<{
+    satellite_id: string;
+    burn_id: string;
+    burn_time: string;
+    dv_ms: number;
+    kind: string;
+  }>;
+  blackout_alerts?: Array<{
+    satellite_id: string;
+    debris_id: string;
+    tca: string;
+    severity: string;
+    message: string;
+  }>;
   stats: {
-    total_satellites: number; total_debris: number;
-    active_cdm_count: number; total_collisions: number;
-    total_outage_s: number; maneuver_log_count: number;
+    total_satellites: number;
+    total_debris: number;
+    debris_sampled?: number;
+    active_cdm_count: number;
+    total_collisions: number;
+    total_outage_s: number;
+    maneuver_log_count: number;
+    total_dv_ms?: number;
+    fuel_consumed_kg?: number;
+    evasion_maneuvers?: number;
+    collisions_avoided?: number;
   };
   maneuver_log: Array<{ burnId: string; satelliteId: string; executedAt: string; dvMs: number }>;
 }
@@ -135,14 +164,13 @@ export default function Dashboard() {
 
   // ── Manual evasion burn — applies immediately ────────────────────────────
   async function fireEvasionBurn(satId: string) {
-    const result = await post("/api/maneuver/schedule", {
-      instant: true,
+    const result = await post("/api/burn/now", {
       satelliteId: satId,
       dvMs: 5.0,
       direction: "prograde",
     });
     if (result.status === "BURN_APPLIED") {
-      addLog(`🔥 Burn fired on ${satId} — Δv 5 m/s, fuel: ${result.fuelAfter?.toFixed(3)} kg (−${result.fuelConsumed?.toFixed(3)} kg)`);
+      addLog(`🔥 Burn fired on ${satId} — Δv 5 m/s, fuel: ${result.fuelRemaining?.toFixed(3)} kg (−${result.fuelConsumed?.toFixed(3)} kg)`);
       await step(60);
     } else {
       addLog(`❌ Burn failed: ${result.error ?? JSON.stringify(result)}`);
@@ -204,7 +232,17 @@ export default function Dashboard() {
 
         <div style={{ display: "flex", gap: "16px", marginLeft: "16px" }}>
           <Chip label="Satellites" value={snapshot?.stats.total_satellites ?? 0} color="#10b981" />
-          <Chip label="Debris" value={snapshot?.stats.total_debris ?? 0} color="#ef4444" />
+          <Chip
+            label="Debris"
+            value={snapshot?.stats.total_debris ?? 0}
+            color="#ef4444"
+            sub={
+              snapshot?.stats.debris_sampled != null &&
+              snapshot.stats.debris_sampled < (snapshot.stats.total_debris || 0)
+                ? `${snapshot.stats.debris_sampled} sampled`
+                : undefined
+            }
+          />
           <Chip label="CDM Warnings" value={snapshot?.stats.active_cdm_count ?? 0} color={snapshot?.stats.active_cdm_count ? "#f59e0b" : "#6b7280"} />
           <Chip label="Burns Fired" value={snapshot?.stats.maneuver_log_count ?? 0} color="#818cf8" />
         </div>
@@ -220,9 +258,47 @@ export default function Dashboard() {
       {/* ── Main ── */}
       <div style={{ display: "flex", flex: 1, minHeight: 0, gap: "0" }}>
 
-        {/* Map */}
-        <div style={{ flex: 1, position: "relative" }}>
-          <OrbitalMap snapshot={snapshot} selectedSat={selectedSat} onSelectSat={setSelectedSat} />
+        {/* Map + spec modules (ground track in OrbitalMap; bullseye / timeline / fleet heatmap below) */}
+        <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            <OrbitalMap snapshot={snapshot} selectedSat={selectedSat} onSelectSat={setSelectedSat} />
+          </div>
+          <div style={{
+            flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "1px",
+            background: "#2a2d3e",
+            borderTop: "1px solid #2a2d3e",
+            maxHeight: "48vh",
+          }}>
+            <div style={{
+              minHeight: "200px",
+              height: "220px",
+              display: "grid",
+              gridTemplateColumns: "minmax(200px, 240px) minmax(280px, 1fr) minmax(220px, 280px)",
+              gap: "1px",
+            }}>
+              <div style={{ background: "#0f1117", minWidth: 0, overflow: "hidden" }}>
+                <BullseyePlot
+                  warnings={snapshot?.active_warnings ?? []}
+                  selectedSat={selectedSat}
+                />
+              </div>
+              <div style={{ background: "#0f1117", minWidth: 0, overflow: "hidden" }}>
+                <ManeuverTimeline snapshot={snapshot} />
+              </div>
+              <div style={{ background: "#0f1117", minWidth: 0, overflow: "hidden" }}>
+                <FuelHeatmap snapshot={snapshot} />
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1px", minHeight: "120px" }}>
+              <div style={{ background: "#0f1117", minWidth: 0, overflow: "hidden" }}>
+                <EfficiencyChart snapshot={snapshot} />
+              </div>
+              <BlackoutPanel alerts={snapshot?.blackout_alerts} />
+            </div>
+          </div>
         </div>
 
         {/* Right panel */}
@@ -336,11 +412,44 @@ export default function Dashboard() {
   );
 }
 
-function Chip({ label, value, color }: { label: string; value: number; color: string }) {
+function Chip({ label, value, color, sub }: { label: string; value: number; color: string; sub?: string }) {
   return (
     <div style={{ textAlign: "center" }}>
       <div style={{ fontSize: "10px", color: "#6b7280" }}>{label}</div>
       <div style={{ fontSize: "18px", fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: "9px", color: "#6b7280", marginTop: "2px" }}>{sub}</div>}
+    </div>
+  );
+}
+
+function BlackoutPanel({
+  alerts,
+}: {
+  alerts?: SnapshotData["blackout_alerts"];
+}) {
+  return (
+    <div style={{
+      background: "#0f1117",
+      padding: "10px 12px",
+      overflow: "auto",
+      minHeight: "110px",
+      borderLeft: "1px solid #2a2d3e",
+    }}>
+      <div style={{ fontSize: "10px", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px" }}>
+        Blackout / LOS risk
+      </div>
+      {!alerts?.length ? (
+        <div style={{ fontSize: "12px", color: "#6b7280" }}>No critical LOS–TCA conflicts flagged.</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: "16px", color: "#e8eaf0", fontSize: "11px", lineHeight: 1.45 }}>
+          {alerts.slice(0, 6).map((a, i) => (
+            <li key={`${a.satellite_id}-${i}`} style={{ marginBottom: "6px" }}>
+              <span style={{ color: a.severity === "critical" ? "#ef4444" : "#f59e0b" }}>{a.satellite_id}</span>
+              {" — "}{a.message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

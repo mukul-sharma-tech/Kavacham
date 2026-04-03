@@ -12,6 +12,8 @@ import { CRITICAL_MISS_KM, COOLDOWN_S } from "../physics/constants";
 import { getUploadWindow, hasAnyLOS } from "../comms/los";
 import { GROUND_STATIONS } from "../comms/groundStations";
 import { optimizeGlobalBurns, optimizeEmergencyBurns, preloadBlackoutSequences } from "../optimizer/global";
+import { parseSatelliteIdFromBurnId } from "../maneuver/burnId";
+import { trimAppendGroundTrack } from "../telemetry/groundTrack";
 
 const TICK_MS = 1000;          // wall-clock tick interval
 let SIM_STEP_S = 60;         // sim seconds per tick (60x speed) - now configurable
@@ -87,7 +89,9 @@ function tick() {
     if (dtRem > 0 && s.state?.r && s.state?.v) s = { ...s, state: propagate(s.state, dtRem) };
 
     // Propagate nominal slot — keep it on the reference orbit
-    s.nominalSlot = propagate(s.nominalSlot, dtS);
+    if (s.nominalSlot?.r && s.nominalSlot?.v) {
+      s.nominalSlot = propagate(s.nominalSlot, dtS);
+    }
 
     // Station-keeping
     if (!isInStationBox(s)) {
@@ -104,7 +108,7 @@ function tick() {
     }
 
     s.timestamp = nextMs;
-    updateSatellite(s);
+    updateSatellite(trimAppendGroundTrack(s, nextMs));
   }
 
   // 3. Collision detection
@@ -139,22 +143,14 @@ function tick() {
 
     // Schedule the optimized burns
     for (const burn of optimalBurns) {
-      // Extract satellite ID from burn ID patterns:
-      // EVASION_SAT-001_123, RECOVERY_SAT-001_123, STATION_KEEPING_SAT-001_123, GRAVEYARD_SAT-001_123
-      const match = burn.burnId.match(/(?:EVASION|RECOVERY|GRAVEYARD|STATION_KEEPING|AUTONOMOUS_[A-Z_]+)_([^_]+(?:-[^_]+)*?)_\d/);
-      const satId = match ? match[1] : null;
+      const satId = parseSatelliteIdFromBurnId(burn.burnId);
       if (satId) scheduleBurns(satId, [burn]);
     }
 
-    // Preload blackout sequences for satellites approaching communication dead zones
     const blackoutBurns = preloadBlackoutSequences();
     for (const burn of blackoutBurns) {
-      // Extract satellite ID using same pattern as COLA burns
-      const match = burn.burnId.match(/(?:EVASION|RECOVERY|GRAVEYARD|STATION_KEEPING|AUTONOMOUS_[A-Z_]+)_([^_]+(?:-[^_]+)*?)_\d/);
-      const satId = match ? match[1] : null;
-      if (satId) {
-        scheduleBurns(satId, [burn]);
-      }
+      const satId = parseSatelliteIdFromBurnId(burn.burnId);
+      if (satId) scheduleBurns(satId, [burn]);
     }
   }
   } catch (err) {

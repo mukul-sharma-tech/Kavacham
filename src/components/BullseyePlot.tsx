@@ -59,8 +59,9 @@ export default function BullseyePlot({ warnings, selectedSat }: { warnings: Warn
       return;
     }
 
-    warnings.forEach((w, i) => {
-      const angle = (i / Math.max(warnings.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    const rel = warnings.filter((w) => w.sat === selectedSat);
+    rel.forEach((w, i) => {
+      const angle = (i / Math.max(rel.length, 1)) * Math.PI * 2 - Math.PI / 2;
       const r = Math.min(w.miss_km / 50, 0.97) * maxR;
       const x = cx + r * Math.cos(angle);
       const y = cy + r * Math.sin(angle);
@@ -87,13 +88,13 @@ export default function BullseyePlot({ warnings, selectedSat }: { warnings: Warn
     ctx.fillText(selectedSat, cx, 18);
     ctx.fillStyle = "rgba(255,255,255,0.3)";
     ctx.font = "10px -apple-system, sans-serif";
-    ctx.fillText(`${warnings.length} conjunction${warnings.length !== 1 ? "s" : ""}`, cx, 30);
+    ctx.fillText(`${rel.length} conjunction${rel.length !== 1 ? "s" : ""}`, cx, 30);
     ctx.textAlign = "left";
   }, [warnings, selectedSat]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div style={{ padding: "10px 14px 0", fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+      <div style={{ padding: "10px 14px 0", fontSize: "11px", fontWeight: "600", color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
         Conjunction Plot
       </div>
       <canvas ref={canvasRef} width={270} height={230} style={{ width: "100%", height: "calc(100% - 30px)", display: "block" }} />

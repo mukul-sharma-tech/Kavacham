@@ -3,12 +3,16 @@ import {
   getState, getAllSatellites, getAllDebris,
   updateSatellite, advanceTime, logManeuver,
   incrementCollisions, addOutageSeconds, setWarnings, scheduleBurns,
+  markSnapshotDirty,
 } from "@/lib/state/store";
 import { propagate } from "@/lib/physics/propagator";
 import { applyBurn, isInStationBox, needsEOL, calculateGraveyardBurn } from "@/lib/maneuver/cola";
 import { assessConjunctions } from "@/lib/spatial/conjunction";
 import { vec3 } from "@/lib/physics/vector";
-import { CRITICAL_MISS_KM } from "@/lib/physics/constants";
+import { CRITICAL_MISS_KM, LOOKAHEAD_S } from "@/lib/physics/constants";
+import { optimizeGlobalBurns, optimizeEmergencyBurns, preloadBlackoutSequences } from "@/lib/optimizer/global";
+import { parseSatelliteIdFromBurnId } from "@/lib/maneuver/burnId";
+import { trimAppendGroundTrack } from "@/lib/telemetry/groundTrack";
 
 const SUB_STEP_S = 60;
 
@@ -27,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     let maneuversExecuted = 0;
     let collisionsDetected = 0;
+    let burnsScheduled = 0;
 
     let currentMs = startMs;
     const subStepMs = SUB_STEP_S * 1000;
@@ -51,9 +56,16 @@ export async function POST(req: NextRequest) {
         );
 
         for (const burn of pending) {
-          if (!burn.deltaV?.x === undefined) continue;
           const dtToBurn = (burn.burnTime - currentMs) / 1000;
           if (dtToBurn > 0) s = { ...s, state: propagate(s.state, dtToBurn) };
+          if (
+            burn.deltaV?.x === undefined ||
+            burn.deltaV?.y === undefined ||
+            burn.deltaV?.z === undefined
+          ) {
+            burn.executed = true;
+            continue;
+          }
           s = applyBurn(s, burn.deltaV, burn.burnTime);
           burn.executed = true;
           maneuversExecuted++;
@@ -81,7 +93,7 @@ export async function POST(req: NextRequest) {
         }
 
         s.timestamp = nextMs;
-        updateSatellite(s);
+        updateSatellite(trimAppendGroundTrack(s, nextMs));
       }
 
       // 3. Collision detection
@@ -99,23 +111,41 @@ export async function POST(req: NextRequest) {
       }
 
       currentMs = nextMs;
+
+      // Keep sim clock aligned so COLA / cooldown logic see the correct "now"
+      advanceTime(nextMs);
+
+      // Autonomous COLA + station-keeping (same pipeline as realtimeEngine)
+      const satsNow = getAllSatellites();
+      const debrisNow = getAllDebris();
+      const warnings = assessConjunctions(satsNow, debrisNow, nextMs, LOOKAHEAD_S);
+      setWarnings(warnings);
+
+      const critical = warnings.filter((w) => w.missDistance < CRITICAL_MISS_KM);
+      const optimalBurns =
+        critical.length > 0 ? optimizeEmergencyBurns() : optimizeGlobalBurns();
+
+      for (const burn of optimalBurns) {
+        const satId = parseSatelliteIdFromBurnId(burn.burnId);
+        if (satId && scheduleBurns(satId, [burn])) burnsScheduled++;
+      }
+
+      for (const burn of preloadBlackoutSequences()) {
+        const satId = parseSatelliteIdFromBurnId(burn.burnId);
+        if (satId && scheduleBurns(satId, [burn])) burnsScheduled++;
+      }
     }
 
-    advanceTime(endMs);
-
-    // Conjunction assessment — use 1-hour lookahead for performance
-    // (24h lookahead with 10s steps = 300k propagations, too slow)
-    const sats = getAllSatellites();
-    const debris = getAllDebris();
-    const warnings = assessConjunctions(sats, debris, endMs, 3600);
-    setWarnings(warnings);
+    const finalWarnings = getState().activeWarnings;
+    markSnapshotDirty();
 
     return NextResponse.json({
       status: "STEP_COMPLETE",
       new_timestamp: new Date(endMs).toISOString(),
       collisions_detected: collisionsDetected,
       maneuvers_executed: maneuversExecuted,
-      active_warnings: warnings.length,
+      burns_scheduled: burnsScheduled,
+      active_warnings: finalWarnings.length,
     });
   } catch (err) {
     console.error("[simulate/step]", err);

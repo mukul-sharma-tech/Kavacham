@@ -7,7 +7,13 @@ import type { StateVector, Vec3 } from "./types";
 
 /** J2-perturbed acceleration in ECI frame (km/s^2) */
 function acceleration(r: Vec3): Vec3 {
+  if (!r || r.x === undefined || r.y === undefined || r.z === undefined) {
+    return { x: 0, y: 0, z: 0 };
+  }
   const rMag = vec3.mag(r);
+  if (!isFinite(rMag) || rMag < 1e-3) {
+    return { x: 0, y: 0, z: 0 };
+  }
   const rMag3 = rMag * rMag * rMag;
   const rMag5 = rMag3 * rMag * rMag;
 
@@ -30,7 +36,12 @@ function acceleration(r: Vec3): Vec3 {
 export function propagate(state: StateVector, dt: number): StateVector {
   // Guard against undefined/NaN state
   if (!state?.r || !state?.v) return state;
-  if (isNaN(state.r.x) || isNaN(state.r.y) || isNaN(state.r.z)) return state;
+  if (
+    isNaN(state.r.x) || isNaN(state.r.y) || isNaN(state.r.z) ||
+    isNaN(state.v.x) || isNaN(state.v.y) || isNaN(state.v.z)
+  ) {
+    return state;
+  }
 
   const d = (s: StateVector) => ({ dr: s.v, dv: acceleration(s.r) });
 

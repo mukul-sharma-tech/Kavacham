@@ -26,6 +26,8 @@ export interface Satellite extends SpaceObject {
   lastBurnTime: number;   // Unix ms, 0 if never
   status: "NOMINAL" | "EVADING" | "RECOVERING" | "EOL";
   scheduledManeuvers: ManeuverBurn[];
+  /** Sub-satellite points for ~90 min Mercator trail (simulation time) */
+  groundTrackHistory?: Array<{ lat: number; lon: number; t: number }>;
 }
 
 export interface ManeuverBurn {
