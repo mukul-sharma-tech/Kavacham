@@ -2,7 +2,7 @@
 
 ## 🌟 Overview
 
-The AETHER Autonomous Constellation Manager (ACM) is a high-performance, predictive backend and 2D operational dashboard built for the National Space Hackathon 2026. It acts as a centralized  brain to autonomously navigate a fleet of 50+ satellites through a heavily congested Low Earth Orbit (LEO) populated by tens of thousands of tracked debris fragments.
+The Kavacham : AETHER Autonomous Constellation Manager (ACM) is a high-performance, predictive backend and 2D operational dashboard built for the National Space Hackathon 2026. It acts as a centralized  brain to autonomously navigate a fleet of 50+ satellites through a heavily congested Low Earth Orbit (LEO) populated by tens of thousands of tracked debris fragments.
 
 Our solution replaces legacy human-in-the-loop manual collision avoidance with a rigorous physics simulation, spatial indexing, and optimization engine for predictive conjunction assessment, maneuver execution, and station-keeping.
 
@@ -115,6 +115,5 @@ src/
 ---
 
 ## 📝 Acknowledgments
-- Built for National Space Hackathon 2026
 - Inspired by production FDO systems and SSA frameworks
 - Includes open-source dependencies, modern React + Three.js integration
